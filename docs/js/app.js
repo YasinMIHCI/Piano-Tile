@@ -354,6 +354,10 @@ for (const el of [els.onset, els.frame, els.minLen, els.ghosts, els.apiUrl, els.
     syncSettingsUi();
   });
 }
+// l'erreur « renseigne d'abord l'URL » ne doit pas rester affichée une fois l'URL saisie
+els.apiUrl.addEventListener('input', () => {
+  if (els.status.classList.contains('error') && !state.busy) els.status.hidden = true;
+});
 
 restoreSettings();
 syncSettingsUi();
