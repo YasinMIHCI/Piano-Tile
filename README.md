@@ -6,6 +6,7 @@ Transforme un enregistrement de piano en **tutoriel à notes tombantes**, façon
 
 - Dépose un fichier audio (MP3, WAV, M4A, FLAC, OGG) : la transcription par IA ([basic-pitch](https://github.com/spotify/basic-pitch) de Spotify, sur TensorFlow.js) tourne **dans le navigateur**, sans serveur.
 - Les notes tombent sur un clavier de 88 touches, synchronisées avec l'audio d'origine : vitesse réglable (0,5× à 1,25×), compensation de latence, noms des notes, couleurs main droite / main gauche.
+- **Mes morceaux** : chaque morceau analysé (notes + audio) est gardé dans le navigateur (IndexedDB) et se rejoue d'un clic à la visite suivante, sans serveur ni nouvelle transcription. La liste est propre à chaque navigateur et disparaît si on efface les données du site.
 - Export **MIDI** avec une piste par main, importable dans Synthesia, un DAW ou MuseScore.
 - Bouton de démo (début de la *Lettre à Élise*) : le morceau est joué avec des échantillons de piano, transcrit, puis comparé à la partition. Avec les réglages par défaut, 53 notes sur 53 sont retrouvées.
 

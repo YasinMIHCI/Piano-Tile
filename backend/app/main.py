@@ -44,6 +44,14 @@ def to_wav(src: Path, dst: Path) -> None:
     )
 
 
+def to_m4a(src: Path, dst: Path) -> None:
+    """Version compressée pour le site (≈ 1 Mo/min contre 5 Mo/min en WAV), gardée dans sa bibliothèque."""
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-i", str(src), "-vn", "-c:a", "aac", "-b:a", "128k", str(dst)],
+        check=True,
+    )
+
+
 def run_job(job_id: str, youtube_url: str | None, upload_path: Path | None) -> None:
     job, job_dir = JOBS[job_id], DATA_DIR / job_id
     try:
@@ -53,6 +61,7 @@ def run_job(job_id: str, youtube_url: str | None, upload_path: Path | None) -> N
         else:
             src = upload_path
         to_wav(src, job_dir / "audio.wav")
+        to_m4a(src, job_dir / "audio.m4a")
 
         job["status"] = "transcribing"
         notes = transcribe_to_midi(job_dir / "audio.wav", job_dir / "transcription.mid")
@@ -120,4 +129,4 @@ def get_midi(job_id: str):
 def get_audio(job_id: str):
     if _get_job(job_id)["status"] != "done":
         raise HTTPException(409, "Transcription non terminée")
-    return FileResponse(DATA_DIR / job_id / "audio.wav", media_type="audio/wav")
+    return FileResponse(DATA_DIR / job_id / "audio.m4a", media_type="audio/mp4")

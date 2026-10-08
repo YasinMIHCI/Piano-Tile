@@ -1,4 +1,5 @@
 import { DEMO_REFERENCE, renderDemoFile } from './demo.js';
+import { deleteTrack, listTracks, loadTrack, saveTrack, updateNotes } from './library.js';
 import { FallingNotesRenderer } from './player.js';
 import { decodeAudioFile, decodeNotes, loadModel, notesToMidiBlob, runModel } from './transcriber.js';
 
@@ -33,6 +34,8 @@ const els = {
   names: $('names'),
   download: $('download'),
   summary: $('summary'),
+  library: $('library'),
+  libraryList: $('library-list'),
 };
 
 const SETTINGS_KEY = 'piano-tile:settings';
@@ -42,7 +45,7 @@ const SERVER_STEPS = {
   transcribing: 'Transcription IA sur le serveur…',
 };
 
-const state = { busy: false, raw: null, notes: [], title: 'transcription', objectUrl: null, isDemo: false };
+const state = { busy: false, raw: null, notes: [], title: 'transcription', objectUrl: null, isDemo: false, trackId: null };
 
 // ---------- horloge : l'audio est la référence, lissée entre deux mises à jour de currentTime ----------
 let lastMedia = 0;
@@ -189,10 +192,28 @@ async function processFile(file, { demo = false } = {}) {
   const useServer = !demo && s.apiUrl && s.engine === 'server';
   state.raw = null;
   const notes = useServer ? (await transcribeOnServer(s.apiUrl, { file })).notes : await transcribeInBrowser(file);
-  if (state.objectUrl) URL.revokeObjectURL(state.objectUrl);
-  state.objectUrl = URL.createObjectURL(file);
+  const title = demo ? 'Lettre à Élise (démo)' : file.name.replace(/\.[^.]+$/, '');
   state.isDemo = demo;
-  showResult(notes, state.objectUrl, demo ? 'Lettre à Élise (démo)' : file.name.replace(/\.[^.]+$/, ''));
+  state.trackId = null;
+  showResult(notes, setAudioBlob(file), title);
+  if (!demo) await remember({ title, source: 'file', notes, audio: file });
+}
+
+function setAudioBlob(blob) {
+  if (state.objectUrl) URL.revokeObjectURL(state.objectUrl);
+  state.objectUrl = URL.createObjectURL(blob);
+  return state.objectUrl;
+}
+
+/** Garde le morceau dans la bibliothèque du navigateur ; un échec (quota…) ne bloque pas la lecture. */
+async function remember(track) {
+  try {
+    state.trackId = await saveTrack(track);
+    await renderLibrary();
+  } catch (e) {
+    console.error(e);
+    setStatus(`Prêt, mais le morceau n’a pas pu être enregistré dans « Mes morceaux » : ${e.message}`, { error: true });
+  }
 }
 
 const handleFile = (file) => run(() => processFile(file));
@@ -208,7 +229,14 @@ function handleYoutube(url) {
     state.raw = null;
     state.isDemo = false;
     const result = await transcribeOnServer(apiUrl, { youtubeUrl: url });
-    showResult(result.notes, result.audioUrl, result.title || 'youtube');
+    setStatus('Récupération de l’audio…');
+    const audioRes = await fetch(result.audioUrl);
+    if (!audioRes.ok) throw new Error(`audio : HTTP ${audioRes.status}`);
+    const audio = await audioRes.blob(); // copie locale : rejouable ensuite sans serveur
+    const title = result.title || 'youtube';
+    state.trackId = null;
+    showResult(result.notes, setAudioBlob(audio), title);
+    await remember({ title, source: 'youtube', url, notes: result.notes, audio });
   });
 }
 
@@ -256,7 +284,73 @@ function recompute() {
     state.notes = notes;
     renderer.setNotes(notes);
     updateSummary();
+    if (state.trackId) {
+      await updateNotes(state.trackId, notes);
+      await renderLibrary();
+    }
     setStatus(`Recalculé : ${notes.length} notes.`, { progress: 1 });
+  });
+}
+
+// ---------- bibliothèque (« Mes morceaux ») ----------
+const fmtDate = (ms) => new Date(ms).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
+const fmtSize = (bytes) => `${(bytes / 1048576).toFixed(1).replace('.', ',')} Mo`;
+
+async function renderLibrary() {
+  let tracks;
+  try {
+    tracks = await listTracks();
+  } catch (e) {
+    console.error(e); // IndexedDB indisponible (navigation privée stricte…) : pas de bibliothèque
+    els.library.hidden = true;
+    return;
+  }
+  els.library.hidden = tracks.length === 0;
+  els.libraryList.replaceChildren(
+    ...tracks.map((t) => {
+      const li = document.createElement('li');
+      li.classList.toggle('current', t.id === state.trackId);
+      const play = document.createElement('button');
+      play.type = 'button';
+      play.className = 'track';
+      play.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l13-7.5z" fill="currentColor"/></svg>';
+      const info = document.createElement('span');
+      const name = document.createElement('strong');
+      name.textContent = t.title;
+      const sub = document.createElement('small');
+      sub.textContent = `${fmtTime(t.duration)} · ${t.noteCount} notes · ${t.source === 'youtube' ? 'YouTube' : 'fichier'} · ${fmtDate(t.createdAt)} · ${fmtSize(t.size)}`;
+      info.append(name, sub);
+      play.append(info);
+      play.title = `Jouer « ${t.title} »`;
+      play.addEventListener('click', () => playFromLibrary(t));
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'secondary remove';
+      del.textContent = 'Supprimer';
+      del.setAttribute('aria-label', `Supprimer « ${t.title} »`);
+      del.addEventListener('click', async () => {
+        if (!confirm(`Supprimer « ${t.title} » de tes morceaux ?`)) return;
+        await deleteTrack(t.id);
+        if (state.trackId === t.id) state.trackId = null;
+        renderLibrary();
+      });
+      li.append(play, del);
+      return li;
+    }),
+  );
+}
+
+function playFromLibrary(meta) {
+  return run(async () => {
+    setStatus('Chargement du morceau…');
+    const track = await loadTrack(meta.id);
+    if (!track) throw new Error('morceau introuvable (supprimé ?)');
+    state.raw = null;
+    state.isDemo = false;
+    state.trackId = meta.id;
+    showResult(track.notes, setAudioBlob(track.audio), meta.title);
+    renderLibrary();
+    els.audio.play().catch(() => {}); // lecture immédiate ; sinon Espace / bouton Lecture
   });
 }
 
@@ -364,3 +458,4 @@ els.apiUrl.addEventListener('input', () => {
 
 restoreSettings();
 syncSettingsUi();
+renderLibrary();
