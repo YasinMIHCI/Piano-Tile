@@ -17,8 +17,9 @@ from .transcribe import transcribe_to_midi
 from .youtube import download_youtube_audio
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "data"))
-AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
-MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+# vidéos acceptées aussi (captures d'écran du téléphone) : ffmpeg n'en garde que le son
+AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".flac", ".ogg", ".mp4", ".mov", ".webm", ".mkv", ".3gp"}
+MAX_UPLOAD_BYTES = 500 * 1024 * 1024
 ALLOWED_ORIGINS = os.environ.get(
     "ALLOWED_ORIGINS", "https://yasinmihci.github.io,http://localhost:8765,http://localhost:3000"
 ).split(",")
@@ -64,8 +65,8 @@ def run_job(job_id: str, youtube_url: str | None, upload_path: Path | None) -> N
         to_m4a(src, job_dir / "audio.m4a")
 
         job["status"] = "transcribing"
-        notes = transcribe_to_midi(job_dir / "audio.wav", job_dir / "transcription.mid")
-        job.update(status="done", notes=notes)
+        notes, probs = transcribe_to_midi(job_dir / "audio.wav", job_dir / "transcription.mid")
+        job.update(status="done", notes=notes, probs=probs)
     except Exception as e:  # le message remonte tel quel à l'interface
         job.update(status="error", error=str(e))
 
@@ -100,7 +101,7 @@ async def create_job(
             shutil.copyfileobj(file.file, f)
         if upload_path.stat().st_size > MAX_UPLOAD_BYTES:
             shutil.rmtree(job_dir)
-            raise HTTPException(413, "Fichier trop volumineux (50 Mo max).")
+            raise HTTPException(413, "Fichier trop volumineux (500 Mo max).")
 
     JOBS[job_id] = {"status": "queued", "title": Path(file.filename).stem if file else None}
     background.add_task(run_job, job_id, youtube_url or None, upload_path)
@@ -123,6 +124,14 @@ def get_midi(job_id: str):
     if _get_job(job_id)["status"] != "done":
         raise HTTPException(409, "Transcription non terminée")
     return FileResponse(DATA_DIR / job_id / "transcription.mid", media_type="audio/midi", filename="transcription.mid")
+
+
+@app.get("/api/jobs/{job_id}/probs")
+def get_probs(job_id: str):
+    """Probabilités brutes (uint8) : trames puis attaques, chacune de taille job.probs.frames × 88."""
+    if _get_job(job_id)["status"] != "done":
+        raise HTTPException(409, "Transcription non terminée")
+    return FileResponse(DATA_DIR / job_id / "probs.bin", media_type="application/octet-stream")
 
 
 @app.get("/api/jobs/{job_id}/audio")

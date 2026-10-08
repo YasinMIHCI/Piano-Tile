@@ -57,6 +57,7 @@ main {
   margin: 0 auto;
   padding: 0 16px 32px;
   display: grid;
+  grid-template-columns: minmax(0, 1fr); /* une colonne qui ne s'élargit jamais au-delà de l'écran */
   gap: 20px;
 }
 
@@ -178,6 +179,7 @@ input[type="range"] { accent-color: var(--accent); }
   max-height: 340px;
   overflow-y: auto;
 }
+.library, #library-list li { min-width: 0; } /* sinon un titre long élargit la page sur téléphone */
 #library-list li { display: flex; gap: 8px; align-items: stretch; }
 .track {
   flex: 1;
@@ -258,4 +260,8 @@ footer { text-align: center; color: var(--muted); font-size: 0.85rem; padding: 8
   .inputs, .settings-grid { grid-template-columns: 1fr; }
   .dropzone { min-height: 150px; }
   .controls #download { margin-left: 0; }
+  .remove { padding: 0 12px; font-size: 1.1rem; }
+  .remove span { display: none; }
+  .remove::before { content: '✕'; }
+  .track { gap: 10px; padding: 10px; }
 }

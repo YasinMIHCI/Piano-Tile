@@ -1,7 +1,15 @@
 import { DEMO_REFERENCE, renderDemoFile } from './demo.js';
 import { deleteTrack, listTracks, loadTrack, saveTrack, updateNotes } from './library.js';
 import { FallingNotesRenderer } from './player.js';
-import { decodeAudioFile, decodeNotes, loadModel, notesToMidiBlob, runModel } from './transcriber.js';
+import {
+  decodeAudioFile,
+  decodeNotes,
+  loadModel,
+  notesToMidiBlob,
+  rawFromServer,
+  runModel,
+  samplesToWavBlob,
+} from './transcriber.js';
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -162,7 +170,7 @@ async function transcribeInBrowser(file) {
   setStatus('Extraction des notes…', { progress: 1 });
   await nextPaint();
   state.raw = raw;
-  return decodeNotes(raw, readSettings());
+  return { notes: await decodeNotes(raw, readSettings()), samples };
 }
 
 async function transcribeOnServer(apiUrl, { file, youtubeUrl }) {
@@ -180,23 +188,55 @@ async function transcribeOnServer(apiUrl, { file, youtubeUrl }) {
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const job = await r.json();
     if (job.status === 'done') {
-      return { notes: job.notes, title: job.title, audioUrl: `${apiUrl}/api/jobs/${jobId}/audio` };
+      return {
+        notes: job.notes,
+        title: job.title,
+        audioUrl: `${apiUrl}/api/jobs/${jobId}/audio`,
+        raw: await fetchServerRaw(apiUrl, jobId, job.probs),
+      };
     }
     if (job.status === 'error') throw new Error(job.error);
     setStatus(SERVER_STEPS[job.status] ?? job.status);
   }
 }
 
+/** Probabilités brutes du serveur, pour « Recalculer » plus tard ; absentes avec un ancien serveur. */
+async function fetchServerRaw(apiUrl, jobId, probs) {
+  if (!probs) return null;
+  try {
+    const res = await fetch(`${apiUrl}/api/jobs/${jobId}/probs`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return rawFromServer(await res.arrayBuffer(), probs);
+  } catch (e) {
+    console.warn('Probabilités indisponibles : « Recalculer » sera désactivé pour ce morceau.', e);
+    return null;
+  }
+}
+
+const isVideo = (file) => file.type.startsWith('video/') || /\.(mp4|mov|webm|mkv|3gp)$/i.test(file.name);
+
 async function processFile(file, { demo = false } = {}) {
   const s = readSettings();
   const useServer = !demo && s.apiUrl && s.engine === 'server';
   state.raw = null;
-  const notes = useServer ? (await transcribeOnServer(s.apiUrl, { file })).notes : await transcribeInBrowser(file);
+  let notes;
+  // Pour une vidéo (capture d'écran du téléphone), on ne garde que le son : bien plus léger dans « Mes morceaux ».
+  let audio = file;
+  if (useServer) {
+    const result = await transcribeOnServer(s.apiUrl, { file });
+    ({ notes } = result);
+    state.raw = result.raw;
+    if (isVideo(file)) audio = await (await fetch(result.audioUrl)).blob();
+  } else {
+    const result = await transcribeInBrowser(file);
+    ({ notes } = result);
+    if (isVideo(file)) audio = samplesToWavBlob(result.samples);
+  }
   const title = demo ? 'Lettre à Élise (démo)' : file.name.replace(/\.[^.]+$/, '');
   state.isDemo = demo;
   state.trackId = null;
-  showResult(notes, setAudioBlob(file), title);
-  if (!demo) await remember({ title, source: 'file', notes, audio: file });
+  showResult(notes, setAudioBlob(audio), title);
+  if (!demo) await remember({ title, source: isVideo(file) ? 'video' : 'file', notes, audio, raw: state.raw });
 }
 
 function setAudioBlob(blob) {
@@ -235,8 +275,9 @@ function handleYoutube(url) {
     const audio = await audioRes.blob(); // copie locale : rejouable ensuite sans serveur
     const title = result.title || 'youtube';
     state.trackId = null;
+    state.raw = result.raw;
     showResult(result.notes, setAudioBlob(audio), title);
-    await remember({ title, source: 'youtube', url, notes: result.notes, audio });
+    await remember({ title, source: 'youtube', url, notes: result.notes, audio, raw: result.raw });
   });
 }
 
@@ -318,7 +359,7 @@ async function renderLibrary() {
       const name = document.createElement('strong');
       name.textContent = t.title;
       const sub = document.createElement('small');
-      sub.textContent = `${fmtTime(t.duration)} · ${t.noteCount} notes · ${t.source === 'youtube' ? 'YouTube' : 'fichier'} · ${fmtDate(t.createdAt)} · ${fmtSize(t.size)}`;
+      sub.textContent = `${fmtTime(t.duration)} · ${t.noteCount} notes · ${{ youtube: 'YouTube', video: 'vidéo' }[t.source] ?? 'fichier'} · ${fmtDate(t.createdAt)} · ${fmtSize(t.size)}`;
       info.append(name, sub);
       play.append(info);
       play.title = `Jouer « ${t.title} »`;
@@ -326,7 +367,7 @@ async function renderLibrary() {
       const del = document.createElement('button');
       del.type = 'button';
       del.className = 'secondary remove';
-      del.textContent = 'Supprimer';
+      del.innerHTML = '<span>Supprimer</span>'; // remplacé par une croix sur téléphone (style.css)
       del.setAttribute('aria-label', `Supprimer « ${t.title} »`);
       del.addEventListener('click', async () => {
         if (!confirm(`Supprimer « ${t.title} » de tes morceaux ?`)) return;
@@ -345,7 +386,7 @@ function playFromLibrary(meta) {
     setStatus('Chargement du morceau…');
     const track = await loadTrack(meta.id);
     if (!track) throw new Error('morceau introuvable (supprimé ?)');
-    state.raw = null;
+    state.raw = track.raw ?? null; // absent pour les morceaux enregistrés avant l'ajout du recalcul
     state.isDemo = false;
     state.trackId = meta.id;
     showResult(track.notes, setAudioBlob(track.audio), meta.title);

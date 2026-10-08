@@ -7,6 +7,7 @@ const TONEJS_MIDI = 'https://cdn.jsdelivr.net/npm/@tonejs/midi@2.0.28/+esm';
 
 const SAMPLE_RATE = 22050; // fréquence attendue par le modèle
 const FRAMES_PER_SECOND = Math.floor(SAMPLE_RATE / 256); // 86 trames d'annotation par seconde
+const N_KEYS = 88;
 const PIANO_MIN = 21; // A0
 const PIANO_MAX = 108; // C8
 export const MAX_DURATION_S = 12 * 60;
@@ -30,7 +31,13 @@ export function loadModel() {
 /** Décode n'importe quel format lu par le navigateur, mixé en mono et rééchantillonné à 22 050 Hz. */
 export async function decodeAudioFile(file) {
   const ctx = new OfflineAudioContext(1, 1, SAMPLE_RATE);
-  const buffer = await ctx.decodeAudioData(await file.arrayBuffer());
+  let buffer;
+  try {
+    // marche aussi pour les vidéos (MP4, MOV, WebM) : seule la piste son est décodée
+    buffer = await ctx.decodeAudioData(await file.arrayBuffer());
+  } catch {
+    throw new Error('impossible de lire le son de ce fichier (format non pris en charge par ce navigateur, ou vidéo sans son).');
+  }
   if (buffer.duration > MAX_DURATION_S) {
     throw new Error(`Morceau trop long (${Math.round(buffer.duration / 60)} min, max ${MAX_DURATION_S / 60} min).`);
   }
@@ -42,43 +49,65 @@ export async function decodeAudioFile(file) {
   return mono;
 }
 
+/**
+ * Sorties brutes d'un modèle, compactées pour être gardées dans la bibliothèque (≈ 1 Mo par minute) :
+ * probabilités de tenue (« frames ») et d'attaque (« onsets »), n trames × 88 touches, quantifiées sur un octet.
+ * kind : 'basic-pitch' (navigateur) ou 'bytedance' (serveur, 100 trames/s).
+ * @typedef {{kind: string, fps: number, n: number, frames: Uint8Array, onsets: Uint8Array}} RawOutput
+ */
+function pack2d(rows) {
+  const out = new Uint8Array(rows.length * N_KEYS);
+  rows.forEach((row, i) => {
+    for (let k = 0; k < N_KEYS; k++) out[i * N_KEYS + k] = Math.round(Math.min(1, Math.max(0, row[k])) * 255);
+  });
+  return out;
+}
+
+function unpack2d(bytes, n) {
+  return Array.from({ length: n }, (_, i) => Array.from(bytes.subarray(i * N_KEYS, (i + 1) * N_KEYS), (v) => v / 255));
+}
+
+/** Probabilités renvoyées par le serveur (GET /api/jobs/{id}/probs) → RawOutput. */
+export function rawFromServer(buffer, { fps, frames: n }) {
+  const bytes = new Uint8Array(buffer);
+  if (bytes.length !== 2 * n * N_KEYS) throw new Error('probabilités du serveur incomplètes');
+  return { kind: 'bytedance', fps, n, frames: bytes.slice(0, n * N_KEYS), onsets: bytes.slice(n * N_KEYS) };
+}
+
 /** Passe l'audio dans le réseau. Renvoie les sorties brutes, réutilisables pour recalculer les notes. */
 export async function runModel(samples, onProgress) {
   const { tf, model } = await loadModel();
   const frames = [];
   const onsets = [];
-  const contours = [];
   tf.engine().startScope(); // libère tous les tenseurs intermédiaires à la fin
   try {
     await model.evaluateModel(
       samples,
-      (f, o, c) => {
+      (f, o) => {
+        // les contours de hauteur (3e sortie) ne servent pas au décodage des notes
         frames.push(...f);
         onsets.push(...o);
-        contours.push(...c);
       },
       onProgress,
     );
   } finally {
     tf.engine().endScope();
   }
-  return { frames, onsets, contours };
+  return { kind: 'basic-pitch', fps: FRAMES_PER_SECOND, n: frames.length, frames: pack2d(frames), onsets: pack2d(onsets) };
 }
-
-const copy2d = (rows) => rows.map((row) => row.slice());
 
 /**
  * Sorties brutes du réseau → liste de notes nettoyées.
- * @param {{frames:number[][], onsets:number[][]}} raw
+ * @param {RawOutput} raw
  * @param {{onsetThreshold:number, frameThreshold:number, minNoteMs:number, removeGhosts:boolean}} settings
  */
 export async function decodeNotes(raw, { onsetThreshold, frameThreshold, minNoteMs, removeGhosts }) {
   const { bp } = await loadModel();
-  const minNoteFrames = Math.max(1, Math.round((minNoteMs * FRAMES_PER_SECOND) / 1000));
-  // outputToNotesPoly modifie ses entrées : on travaille sur des copies pour pouvoir recalculer.
+  const minNoteFrames = Math.max(1, Math.round((minNoteMs * raw.fps) / 1000));
+  // outputToNotesPoly modifie ses entrées : on décompacte des copies neuves à chaque recalcul.
   const events = bp.outputToNotesPoly(
-    copy2d(raw.frames),
-    copy2d(raw.onsets),
+    unpack2d(raw.frames, raw.n),
+    unpack2d(raw.onsets, raw.n),
     onsetThreshold,
     frameThreshold,
     minNoteFrames,
@@ -86,13 +115,25 @@ export async function decodeNotes(raw, { onsetThreshold, frameThreshold, minNote
     4186, // fréquence max : C8
     27.5, // fréquence min : A0
     true, // « melodia trick » : supprime les résonances isolées
+    Math.round((11 * raw.fps) / FRAMES_PER_SECOND), // tolérance de ≈ 0,13 s, quel que soit le modèle
   );
-  const notes = bp.noteFramesToTime(events).map((n) => ({
-    pitch: n.pitchMidi,
-    start: n.startTimeSeconds,
-    end: n.startTimeSeconds + n.durationSeconds,
-    velocity: Math.min(127, Math.max(1, Math.round(n.amplitude * 127))),
-  }));
+  const velocity = (amplitude) => Math.min(127, Math.max(1, Math.round(amplitude * 127)));
+  // basic-pitch a sa propre conversion trames → secondes (décalage par fenêtre de 2 s) ;
+  // pour le modèle du serveur, la trame i est simplement à i / fps secondes.
+  const notes =
+    raw.kind === 'basic-pitch'
+      ? bp.noteFramesToTime(events).map((n) => ({
+          pitch: n.pitchMidi,
+          start: n.startTimeSeconds,
+          end: n.startTimeSeconds + n.durationSeconds,
+          velocity: velocity(n.amplitude),
+        }))
+      : events.map((e) => ({
+          pitch: e.pitchMidi,
+          start: e.startFrame / raw.fps,
+          end: (e.startFrame + e.durationFrames) / raw.fps,
+          velocity: velocity(e.amplitude),
+        }));
   return cleanNotes(notes, { octaveGhostRatio: removeGhosts ? 0.75 : null });
 }
 
@@ -138,6 +179,29 @@ export function cleanNotes(notes, { minDur = 0.03, minVelocity = 6, octaveGhostR
   return out
     .map((n) => ({ ...n, hand: n.pitch < 60 ? 'L' : 'R' })) // heuristique simple : coupure au Do central
     .sort((a, b) => a.start - b.start);
+}
+
+/** Échantillons mono → fichier WAV 16 bits (pour garder seulement le son d'une vidéo). */
+export function samplesToWavBlob(samples, sampleRate = SAMPLE_RATE) {
+  const view = new DataView(new ArrayBuffer(44 + samples.length * 2));
+  const ascii = (offset, text) => [...text].forEach((ch, i) => view.setUint8(offset + i, ch.charCodeAt(0)));
+  ascii(0, 'RIFF');
+  view.setUint32(4, 36 + samples.length * 2, true);
+  ascii(8, 'WAVE');
+  ascii(12, 'fmt ');
+  view.setUint32(16, 16, true); // taille du bloc fmt
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true); // octets par seconde
+  view.setUint16(32, 2, true); // octets par échantillon
+  view.setUint16(34, 16, true); // bits par échantillon
+  ascii(36, 'data');
+  view.setUint32(40, samples.length * 2, true);
+  for (let i = 0; i < samples.length; i++) {
+    view.setInt16(44 + i * 2, Math.round(Math.max(-1, Math.min(1, samples[i])) * 32767), true);
+  }
+  return new Blob([view], { type: 'audio/wav' });
 }
 
 /** Export MIDI avec une piste par main (importable tel quel dans Synthesia). */

@@ -38,13 +38,14 @@ export async function listTracks() {
 }
 
 /** Enregistre un morceau et renvoie son identifiant. */
-export async function saveTrack({ title, source, url = null, notes, audio }) {
+export async function saveTrack({ title, source, url = null, notes, audio, raw = null }) {
   const id = crypto.randomUUID();
   const duration = notes.reduce((m, n) => Math.max(m, n.end), 0);
-  const meta = { id, title, source, url, createdAt: Date.now(), duration, noteCount: notes.length, size: audio.size };
+  const size = audio.size + (raw ? raw.frames.length + raw.onsets.length : 0);
+  const meta = { id, title, source, url, createdAt: Date.now(), duration, noteCount: notes.length, size };
   await tx(['meta', 'data'], 'readwrite', (m, d) => {
     m.put(meta);
-    d.put({ id, notes, audio });
+    d.put({ id, notes, audio, raw }); // raw : probabilités du modèle, pour « Recalculer »
   });
   // Demande au navigateur de ne pas effacer ces données quand l'espace disque manque
   navigator.storage?.persist?.().catch(() => {});
@@ -61,7 +62,7 @@ export async function updateNotes(id, notes) {
   });
 }
 
-/** Notes + audio (Blob) d'un morceau. */
+/** Notes, audio (Blob) et sorties brutes du modèle d'un morceau. */
 export function loadTrack(id) {
   return tx(['data'], 'readonly', (d) => d.get(id));
 }

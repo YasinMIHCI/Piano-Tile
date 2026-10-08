@@ -8,6 +8,7 @@ from pathlib import Path
 import pretty_midi
 
 PIANO_MIN, PIANO_MAX = 21, 108  # A0 → C8
+PROBS_FPS = 100  # trames par seconde du modèle ByteDance
 _model_lock = threading.Lock()  # un seul job à la fois sur le modèle
 
 
@@ -89,7 +90,7 @@ def midi_to_notes(pm: pretty_midi.PrettyMIDI) -> list[dict]:
     ]
 
 
-def transcribe_to_midi(audio_path: Path, midi_path: Path) -> list[dict]:
+def transcribe_to_midi(audio_path: Path, midi_path: Path) -> tuple[list[dict], dict]:
     import librosa
     from piano_transcription_inference import sample_rate
 
@@ -97,8 +98,23 @@ def transcribe_to_midi(audio_path: Path, midi_path: Path) -> list[dict]:
     audio, _ = librosa.load(str(audio_path), sr=sample_rate, mono=True)  # 16 kHz mono
     raw_midi = midi_path.with_name("raw.mid")
     with _model_lock:
-        bytedance_model().transcribe(audio, str(raw_midi))
+        out = bytedance_model().transcribe(audio, str(raw_midi))["output_dict"]
 
-    pm = clean_midi(pretty_midi.PrettyMIDI(str(raw_midi)), duration=len(audio) / sample_rate)
+    duration = len(audio) / sample_rate
+    # le package coupe ses sorties au nombre d'échantillons, pas de trames : on retire le remplissage final
+    n_frames = min(len(out["frame_output"]), int(duration * PROBS_FPS) + 1)
+    save_probs(out["frame_output"][:n_frames], out["reg_onset_output"][:n_frames], midi_path.with_name("probs.bin"))
+    pm = clean_midi(pretty_midi.PrettyMIDI(str(raw_midi)), duration=duration)
     pm.write(str(midi_path))
-    return midi_to_notes(pm)
+    return midi_to_notes(pm), {"fps": PROBS_FPS, "frames": n_frames}
+
+
+def save_probs(frames, onsets, path: Path) -> None:
+    """Probabilités brutes (trames × 88 touches) quantifiées sur un octet : trames puis attaques.
+
+    Le site s'en sert pour « Recalculer » avec ses propres seuils, sans refaire passer le modèle.
+    """
+    import numpy as np
+
+    to_u8 = lambda x: np.clip(np.rint(np.asarray(x) * 255), 0, 255).astype(np.uint8)
+    path.write_bytes(to_u8(frames).tobytes() + to_u8(onsets).tobytes())
