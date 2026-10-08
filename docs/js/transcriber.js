@@ -1,5 +1,7 @@
 // Transcription audio → notes, entièrement dans le navigateur, avec basic-pitch (Spotify) sur TensorFlow.js.
 
+import { assignHands } from './hands.js';
+
 const BASIC_PITCH = 'https://cdn.jsdelivr.net/npm/@spotify/basic-pitch@1.0.1';
 // Même URL que celle importée par basic-pitch : on obtient la même instance de TensorFlow.js.
 const TFJS = 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.19.0/+esm';
@@ -176,9 +178,7 @@ export function cleanNotes(notes, { minDur = 0.03, minVelocity = 6, octaveGhostR
     if (prev && n.start < prev.end) prev.end = n.start; // même touche ré-attaquée
     out.push({ ...n });
   }
-  return out
-    .map((n) => ({ ...n, hand: n.pitch < 60 ? 'L' : 'R' })) // heuristique simple : coupure au Do central
-    .sort((a, b) => a.start - b.start);
+  return assignHands(out);
 }
 
 /** Échantillons mono → fichier WAV 16 bits (pour garder seulement le son d'une vidéo). */

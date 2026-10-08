@@ -1,4 +1,5 @@
 import { DEMO_REFERENCE, renderDemoFile } from './demo.js';
+import { assignHands } from './hands.js';
 import { deleteTrack, listTracks, loadTrack, saveTrack, updateNotes } from './library.js';
 import { FallingNotesRenderer } from './player.js';
 import {
@@ -296,6 +297,8 @@ function demoAccuracy(notes) {
 }
 
 function showResult(notes, audioUrl, title) {
+  // recalculée ici aussi pour les notes du serveur et les morceaux enregistrés avec l'ancienne règle
+  notes = assignHands(notes);
   state.notes = notes;
   state.title = title;
   renderer.setNotes(notes);

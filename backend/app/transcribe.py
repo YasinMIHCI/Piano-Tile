@@ -84,7 +84,7 @@ def midi_to_notes(pm: pretty_midi.PrettyMIDI) -> list[dict]:
             "start": round(n.start, 4),
             "end": round(n.end, 4),
             "velocity": n.velocity,
-            "hand": "L" if n.pitch < 60 else "R",
+            "hand": "L" if n.pitch < 60 else "R",  # approximation : le site recalcule les mains (docs/js/hands.js)
         }
         for n in pm.instruments[0].notes
     ]

@@ -74,7 +74,7 @@ Chrome demande la première fois l'autorisation d'**accéder aux appareils du r�
 
 - Les accords denses, la pédale de sustain et la réverbération provoquent des fausses notes et des erreurs d'octave. Le filtre « octaves fantômes » (activé par défaut) en retire une bonne partie.
 - Les meilleurs résultats viennent d'un piano seul, enregistré proprement. Avec d'autres instruments ou du chant, la transcription se dégrade fortement.
-- La répartition des mains est une approximation (coupure au Do central).
+- La répartition des mains reste une estimation : elle suit la position de chaque main dans le temps (`docs/js/hands.js`), mais les passages où les mains se croisent ou se chevauchent peuvent être mal attribués.
 - Télécharger depuis YouTube peut enfreindre ses conditions d'utilisation et le droit d'auteur : à réserver à un usage personnel ou à des contenus dont tu as les droits.
 
 ## Crédits

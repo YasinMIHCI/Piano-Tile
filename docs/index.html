@@ -122,7 +122,7 @@
       <ol>
         <li><strong>Décodage :</strong> l'audio est converti en mono 22 kHz par le navigateur (Web Audio).</li>
         <li><strong>Transcription :</strong> basic-pitch (TensorFlow.js, sur la carte graphique via WebGL) estime pour chaque instant quelles notes commencent et lesquelles résonnent.</li>
-        <li><strong>Nettoyage :</strong> on retire les notes hors tessiture, trop courtes ou fantômes, puis on répartit les mains autour du Do central.</li>
+        <li><strong>Nettoyage :</strong> on retire les notes hors tessiture, trop courtes ou fantômes, puis on répartit les mains en suivant la position de chacune dans le temps (écart jouable, notes tenues, accords).</li>
         <li><strong>Rendu :</strong> un canvas dessine les notes à 60 images/s, calées sur la lecture de l'audio d'origine.</li>
       </ol>
       <h2>Limites</h2>
