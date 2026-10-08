@@ -46,6 +46,7 @@ Une page statique ne peut pas télécharger depuis YouTube. Le dossier `backend/
 # 1. Python 3.11 et ffmpeg (rouvrir le terminal ensuite pour que le PATH soit à jour)
 winget install --id Python.Python.3.11 -e
 winget install --id Gyan.FFmpeg -e
+winget install --id DenoLand.Deno -e   # moteur JS exigé par yt-dlp pour YouTube (sinon erreur HTTP 403)
 
 # 2. Environnement virtuel + dépendances (PyTorch CPU ; avec une carte NVIDIA, prendre l'index cu12x de pytorch.org)
 cd backend
