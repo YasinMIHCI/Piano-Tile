@@ -134,10 +134,13 @@ async function run(task) {
   } catch (e) {
     console.error(e);
     const offline = e instanceof TypeError && /fetch/i.test(e.message);
+    const local = /^http:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(readSettings().apiUrl);
     setStatus(
-      offline
-        ? 'Serveur injoignable : vérifie son URL, et qu’il est bien en HTTPS avec le CORS autorisé pour ce site.'
-        : `Erreur : ${e.message}`,
+      offline && local
+        ? 'Serveur local injoignable : lance backend\\start.cmd et garde sa fenêtre ouverte. Si Chrome a demandé l’accès au réseau local, il faut l’autoriser (icône à gauche de l’adresse).'
+        : offline
+          ? 'Serveur injoignable : vérifie son URL, et qu’il est bien en HTTPS avec le CORS autorisé pour ce site.'
+          : `Erreur : ${e.message}`,
       { error: true },
     );
   } finally {
