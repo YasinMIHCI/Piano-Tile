@@ -39,9 +39,14 @@ def _remove_octave_ghosts(notes: list[pretty_midi.Note], ratio: float = 0.75) ->
     return [n for n in notes if not is_ghost(n)]
 
 
-def clean_midi(pm: pretty_midi.PrettyMIDI, min_dur=0.03, min_velocity=6) -> pretty_midi.PrettyMIDI:
+def clean_midi(
+    pm: pretty_midi.PrettyMIDI, duration: float | None = None, min_dur=0.03, min_velocity=6
+) -> pretty_midi.PrettyMIDI:
     """Même nettoyage que la version navigateur (docs/js/transcriber.js)."""
     notes = [n for inst in pm.instruments if not inst.is_drum for n in inst.notes]
+    if duration is not None:  # le modèle complète le dernier segment : des notes peuvent dépasser la fin de l'audio
+        for n in notes:
+            n.end = min(n.end, duration)
     notes = [
         n for n in notes
         if PIANO_MIN <= n.pitch <= PIANO_MAX and n.end - n.start >= min_dur and n.velocity >= min_velocity
@@ -85,13 +90,15 @@ def midi_to_notes(pm: pretty_midi.PrettyMIDI) -> list[dict]:
 
 
 def transcribe_to_midi(audio_path: Path, midi_path: Path) -> list[dict]:
-    from piano_transcription_inference import load_audio, sample_rate
+    import librosa
+    from piano_transcription_inference import sample_rate
 
-    audio, _ = load_audio(str(audio_path), sr=sample_rate, mono=True)  # 16 kHz mono
+    # load_audio du package appelle librosa.core.audio, supprimé depuis librosa 0.10
+    audio, _ = librosa.load(str(audio_path), sr=sample_rate, mono=True)  # 16 kHz mono
     raw_midi = midi_path.with_name("raw.mid")
     with _model_lock:
         bytedance_model().transcribe(audio, str(raw_midi))
 
-    pm = clean_midi(pretty_midi.PrettyMIDI(str(raw_midi)))
+    pm = clean_midi(pretty_midi.PrettyMIDI(str(raw_midi)), duration=len(audio) / sample_rate)
     pm.write(str(midi_path))
     return midi_to_notes(pm)

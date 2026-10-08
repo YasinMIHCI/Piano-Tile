@@ -26,7 +26,15 @@ ALLOWED_ORIGINS = os.environ.get(
 JOBS: dict[str, dict] = {}  # en mémoire : suffisant pour un seul serveur ; Redis + RQ/Celery au-delà
 
 app = FastAPI(title="Piano-Tile API")
-app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS, allow_methods=["*"], allow_headers=["*"])
+# allow_private_network : Chrome envoie un preflight « Private Network Access » quand un site public
+# (GitHub Pages) appelle localhost ; sans cet en-tête il est rejeté (400).
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_private_network=True,
+)
 
 
 def to_wav(src: Path, dst: Path) -> None:

@@ -40,15 +40,29 @@ Une page statique ne peut pas télécharger depuis YouTube. Le dossier `backend/
 2. le transcrit avec [`piano_transcription_inference`](https://github.com/qiuqiangkong/piano_transcription_inference) (ByteDance, F1 ≈ 96,8 % sur les attaques de notes du jeu de données MAESTRO) ;
 3. renvoie les notes au site, qui les affiche avec le même lecteur.
 
-**En local** (Python 3.10/3.11 et ffmpeg requis) :
+**En local sous Windows** (procédure testée sous Windows 11, PowerShell, à faire une seule fois) :
 
-```bash
+```powershell
+# 1. Python 3.11 et ffmpeg (rouvrir le terminal ensuite pour que le PATH soit à jour)
+winget install --id Python.Python.3.11 -e
+winget install --id Gyan.FFmpeg -e
+
+# 2. Environnement virtuel + dépendances (PyTorch CPU ; avec une carte NVIDIA, prendre l'index cu12x de pytorch.org)
 cd backend
-pip install -r requirements.txt
-uvicorn app.main:app --port 8000
+py -3.11 -m venv .venv
+.\.venv\Scripts\python -m pip install --upgrade pip
+.\.venv\Scripts\pip install torch --index-url https://download.pytorch.org/whl/cpu
+.\.venv\Scripts\pip install -r requirements.txt
+
+# 3. Poids du modèle (~172 Mo) : le téléchargement automatique du package dépend de wget, absent sous Windows
+$d = "$HOME\piano_transcription_inference_data"
+New-Item -ItemType Directory -Force $d
+curl.exe -L -o "$d\note_F1=0.9677_pedal_F1=0.9186.pth" "https://zenodo.org/record/4034264/files/CRNN_note_F1%3D0.9677_pedal_F1%3D0.9186.pth?download=1"
 ```
 
-Dans le site, ouvrir **Paramètres** et renseigner `http://localhost:8000` comme URL de l'API. Sous Windows, le téléchargement automatique des poids du modèle repose sur `wget` : à défaut, télécharger le fichier `.pth` à la main et indiquer son chemin dans la variable d'environnement `PIANO_CHECKPOINT`.
+**À chaque utilisation** : double-cliquer sur `backend\start.cmd` (ou lancer `backend\start.ps1`). Le script active le venv, définit `PIANO_CHECKPOINT` (chemin ci-dessus par défaut) et démarre l'API sur http://localhost:8000. Garder la fenêtre ouverte pendant l'utilisation. Sur le site, ouvrir **Paramètres** et renseigner `http://localhost:8000` comme URL de l'API.
+
+Chrome demande la première fois l'autorisation d'**accéder aux appareils du réseau local** pour yasinmihci.github.io : cliquer sur **Autoriser**. En cas de refus, la permission se rétablit via l'icône à gauche de l'adresse → Paramètres du site → « Réseau local » → Autoriser. Sur CPU, compter environ 1,5 s de calcul par seconde de musique.
 
 **Hébergé** : `backend/Dockerfile` est prêt pour un Space Hugging Face (SDK Docker, port 7860). Les origines CORS autorisées se règlent avec `ALLOWED_ORIGINS`. Attention : YouTube bloque souvent les adresses IP des datacenters, donc les liens YouTube fonctionnent mieux avec le serveur lancé en local.
 
