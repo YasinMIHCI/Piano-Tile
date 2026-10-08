@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Piano-Tile · tutoriel piano automatique</title>
+  <meta name="description" content="Transforme un enregistrement de piano en tutoriel à notes tombantes, façon Synthesia. Transcription par IA directement dans le navigateur.">
+  <meta name="theme-color" content="#0a0e1a">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0e1a'/%3E%3Crect x='5' y='6' width='6' height='13' rx='2' fill='%234ade80'/%3E%3Crect x='13' y='3' width='6' height='9' rx='2' fill='%2360a5fa'/%3E%3Crect x='21' y='9' width='6' height='10' rx='2' fill='%234ade80'/%3E%3Crect x='4' y='22' width='24' height='6' rx='1.5' fill='%23f5f5f5'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="./">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="5" y="6" width="6" height="13" rx="2" fill="#4ade80"/><rect x="13" y="3" width="6" height="9" rx="2" fill="#60a5fa"/><rect x="21" y="9" width="6" height="10" rx="2" fill="#4ade80"/><rect x="4" y="22" width="24" height="6" rx="1.5" fill="#f5f5f5"/></svg>
+      Piano-Tile
+    </a>
+    <a class="gh" href="https://github.com/YasinMIHCI/Piano-Tile">Code source</a>
+  </header>
+
+  <main>
+    <section class="card intro">
+      <h1>Transforme un morceau de piano en tutoriel à notes tombantes</h1>
+      <p class="lead">Dépose un enregistrement : un réseau de neurones (basic-pitch, de Spotify) détecte chaque note
+        <strong>directement dans ton navigateur</strong>, rien n'est envoyé sur un serveur. Les notes tombent ensuite sur un clavier virtuel, synchronisées avec l'audio.</p>
+
+      <div class="inputs">
+        <label id="dropzone" class="dropzone">
+          <input id="file" type="file" accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0-4 4m4-4 4 4M5 20h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <strong>Dépose un fichier audio</strong>
+          <span>ou clique pour en choisir un · MP3, WAV, M4A, FLAC, OGG · 12 min max</span>
+        </label>
+
+        <div class="side">
+          <form id="yt-form" class="yt">
+            <label for="yt-url">Lien YouTube</label>
+            <div class="row">
+              <input id="yt-url" type="url" placeholder="https://www.youtube.com/watch?v=…" required>
+              <button type="submit">Analyser</button>
+            </div>
+            <p id="yt-hint" class="hint">Nécessite le serveur de transcription (voir Paramètres) : une page statique ne peut pas télécharger depuis YouTube.</p>
+          </form>
+          <button id="demo" class="secondary" type="button">Essayer la démo : Lettre à Élise</button>
+        </div>
+      </div>
+
+      <details id="settings">
+        <summary>Paramètres</summary>
+        <div class="settings-grid">
+          <fieldset>
+            <legend>Détection des notes</legend>
+            <label>Seuil d'attaque <span class="hint">plus haut = moins de fausses notes</span>
+              <span class="range"><input id="onset" type="range" min="0.2" max="0.9" step="0.05" value="0.6"><output>0.6</output></span>
+            </label>
+            <label>Seuil de tenue <span class="hint">plus haut = notes plus courtes</span>
+              <span class="range"><input id="frame" type="range" min="0.1" max="0.7" step="0.05" value="0.3"><output>0.3</output></span>
+            </label>
+            <label>Durée minimale d'une note
+              <span class="range"><input id="min-len" type="range" min="20" max="200" step="10" value="60"><output>60 ms</output></span>
+            </label>
+            <label class="check"><input id="ghosts" type="checkbox" checked> Supprimer les octaves fantômes <span class="hint">harmoniques prises pour des notes</span></label>
+            <button id="recompute" class="secondary" type="button" disabled>Recalculer avec ces réglages</button>
+          </fieldset>
+          <fieldset>
+            <legend>Serveur de transcription (optionnel)</legend>
+            <label for="api-url">URL de l'API</label>
+            <input id="api-url" type="url" placeholder="https://mon-serveur.hf.space ou http://localhost:8000">
+            <label for="engine">Pour les fichiers déposés</label>
+            <select id="engine">
+              <option value="browser">Transcrire dans le navigateur (basic-pitch)</option>
+              <option value="server">Transcrire sur le serveur (modèle piano ByteDance, plus précis)</option>
+            </select>
+            <p class="hint">Le serveur (dossier <code>backend/</code> du dépôt) ajoute les liens YouTube et un modèle spécialisé piano.</p>
+          </fieldset>
+        </div>
+      </details>
+
+      <div id="status" class="status" hidden role="status" aria-live="polite">
+        <p id="status-msg"></p>
+        <div id="status-bar" class="bar"><span></span></div>
+      </div>
+    </section>
+
+    <section id="player" class="card player" hidden>
+      <canvas id="canvas" aria-label="Notes tombantes sur un clavier de piano"></canvas>
+      <div class="controls">
+        <button id="play" class="play" type="button" aria-label="Lecture / pause">
+          <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l13-7.5z" fill="currentColor"/></svg>
+          <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h4v16H6zM14 4h4v16h-4z" fill="currentColor"/></svg>
+        </button>
+        <span id="time" class="time">0:00 / 0:00</span>
+        <input id="seek" class="seek" type="range" min="0" max="1000" value="0" aria-label="Position">
+        <label>Vitesse
+          <select id="speed">
+            <option value="0.5">0,5×</option>
+            <option value="0.75">0,75×</option>
+            <option value="1" selected>1×</option>
+            <option value="1.25">1,25×</option>
+          </select>
+        </label>
+        <label>Latence
+          <input id="latency" type="range" min="0" max="300" step="10" value="0">
+          <output id="latency-out">0 ms</output>
+        </label>
+        <label class="check"><input id="names" type="checkbox" checked> Noms des notes</label>
+        <button id="download" class="secondary" type="button">Télécharger le MIDI</button>
+      </div>
+      <p id="summary" class="hint summary"></p>
+      <p class="hint legend"><span class="dot r"></span> main droite <span class="dot l"></span> main gauche · Espace : lecture/pause · ← → : ±5 s</p>
+      <audio id="audio" preload="auto"></audio>
+    </section>
+
+    <section class="card about">
+      <h2>Comment ça marche</h2>
+      <ol>
+        <li><strong>Décodage :</strong> l'audio est converti en mono 22 kHz par le navigateur (Web Audio).</li>
+        <li><strong>Transcription :</strong> basic-pitch (TensorFlow.js, sur la carte graphique via WebGL) estime pour chaque instant quelles notes commencent et lesquelles résonnent.</li>
+        <li><strong>Nettoyage :</strong> on retire les notes hors tessiture, trop courtes ou fantômes, puis on répartit les mains autour du Do central.</li>
+        <li><strong>Rendu :</strong> un canvas dessine les notes à 60 images/s, calées sur la lecture de l'audio d'origine.</li>
+      </ol>
+      <h2>Limites</h2>
+      <p>La transcription n'est pas parfaite : les accords denses, la pédale de sustain, la réverbération ou d'autres instruments créent des fausses notes et des erreurs d'octave. Les meilleurs résultats viennent d'enregistrements de piano seul, propres et proches du micro. Joue avec les seuils dans les Paramètres, ou utilise le serveur avec son modèle spécialisé piano, plus précis. La répartition des mains est une approximation.</p>
+    </section>
+  </main>
+
+  <footer>Piano-Tile · transcription : <a href="https://github.com/spotify/basic-pitch">basic-pitch</a> (Apache-2.0) · sons de la démo : Salamander Grand Piano, Alexander Holm (CC-BY 3.0)</footer>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
