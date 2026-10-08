@@ -1,7 +1,7 @@
 fastapi
 uvicorn[standard]
 python-multipart
-yt-dlp
+yt-dlp[default]  # inclut yt-dlp-ejs ; nécessite aussi Deno (winget install DenoLand.Deno)
 pretty_midi
 torch
 piano_transcription_inference
